@@ -25,7 +25,8 @@ The `dist` branch is written by `publish` only. Close pull requests that target 
 
 - `scope` on a pull request runs the pull request's own copy of the workflow: it is early feedback. The scope check that counts is step 2 of every `gates` job, which runs the script of `main`.
 - GitHub cannot require a `gates` run before a merge (runs started by a label or by hand are not attached to the pull request's commit). **You** are the enforcement: merge only when the runs named `gates … · PR <n> · <sha>` are green for the head sha you are merging.
-- Tier 3 runs the contributor's code next to the engine's source, in a container without network. It cannot send anything out, but it can change what the job reports: a green `eval` means as much as your reading of `eval/`.
+- Tier 3 runs the contributor's code next to the engine's source, in a container without network. It cannot open a connection, but two things it writes are public: the job log (at most 50 findings, each a rule name, a path and a line number) and, for `reference`, the artifact (three files, under 256 KB, downloadable by any signed-in user as soon as it is uploaded). Both are small, not closed: code you did not read can use them to carry text out, and can also change what the job reports. A green `eval` means as much as your reading of `eval/`.
+- Tier 3 clones the engine with its large files (the eval harness needs them); that path has not run with a deploy key yet.
 - The public log of a gate shows the rule, file and line of each finding. The full report and the tool's stderr are not uploaded anywhere (an artifact of a public repository is readable by everyone); to see a message, run the same `slot` command on your machine.
 
 ## Reviewing a pack

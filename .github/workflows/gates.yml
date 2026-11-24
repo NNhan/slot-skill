@@ -15,7 +15,8 @@
 #   - code of the pull request runs only in a container with no network, no capability and not as root, which sees the engine,
 #     `pr/` and nothing else of the runner; the job that does it has `permissions: {}`;
 #   - no cache, no third-party action, GitHub-hosted runners only;
-#   - the public log shows the rule, file and line of a finding, never its message, the tool's stderr or the engine's clone.
+#   - the public log shows the rule, file and line of at most 50 findings, never a message, the tool's stderr or the engine's
+#     clone. The log and the reference artifact are still ways out for whatever tier 3 ran: they are small, not closed.
 name: gates
 run-name: gates ${{ inputs.gate || github.event.label.name }} · PR ${{ github.event.pull_request.number || inputs.pr }} · ${{ github.event.pull_request.head.sha || inputs.sha }}
 
@@ -69,7 +70,10 @@ jobs:
         run: |
           mkdir pr dist
           git -C registry archive "$SHA" | tar -x -C pr
-          if git -C registry fetch -q --no-tags "$REPO_URL" "+refs/heads/dist:refs/remotes/origin/dist"; then git -C registry archive origin/dist | tar -x -C dist; fi
+          if git ls-remote --exit-code "$REPO_URL" refs/heads/dist > /dev/null; then
+            git -C registry fetch -q --no-tags "$REPO_URL" "+refs/heads/dist:refs/remotes/origin/dist"
+            git -C registry archive origin/dist | tar -x -C dist
+          fi
           git -C registry show -s --format=%cs "$SHA" > "$RUNNER_TEMP/today"
       - name: Engine (read-only deploy key)
         env:
@@ -142,7 +146,10 @@ jobs:
         working-directory: registry
         run: node scripts/scope.mjs --base "$(git rev-parse origin/main)" --head "$SHA"
       - name: Export the commit as plain files
+        env:
+          PACK: ${{ steps.scope.outputs.pack }}
         run: |
+          if [ -z "$PACK" ]; then echo "this pull request has no pack: nothing for tier 3 to run"; exit 1; fi
           mkdir pr
           git -C registry archive "$SHA" | tar -x -C pr
       - name: Engine (read-only deploy key)
@@ -205,7 +212,10 @@ jobs:
         working-directory: registry
         run: node scripts/scope.mjs --base "$(git rev-parse origin/main)" --head "$SHA"
       - name: Export the commit as plain files
+        env:
+          PACK: ${{ steps.scope.outputs.pack }}
         run: |
+          if [ -z "$PACK" ]; then echo "this pull request has no pack: nothing for tier 3 to run"; exit 1; fi
           mkdir pr
           git -C registry archive "$SHA" | tar -x -C pr
       - name: Engine (read-only deploy key)
@@ -256,7 +266,7 @@ jobs:
           if [ -L "pr" ] || [ -L "pr/packs" ] || [ -L "pr/packs/$PACK" ] || [ -L "pr/packs/$PACK/eval" ] || [ -L "$dir" ]; then exit 1; fi
           if [ -n "$(find "$dir" -mindepth 1 ! -type f)" ]; then exit 1; fi
           test "$(find "$dir" -mindepth 1 | sort | tr '\n' ' ')" = "$dir/mcp.jsonl $dir/reference.patch $dir/signature.json "
-          test "$(du -sk "$dir" | cut -f1)" -lt 1024
+          test "$(du -sk "$dir" | cut -f1)" -lt 256
       - name: Upload eval/reference (a maintainer reads it, then commits it to the pull request)
         if: steps.scope.outputs.pack != ''
         uses: actions/upload-artifact@v4

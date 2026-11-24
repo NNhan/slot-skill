@@ -69,6 +69,7 @@ jobs:
       - name: Lint every pack (what is published was linted by this run, whatever ran before the merge)
         working-directory: engine
         run: |
+          shopt -s nullglob
           for pack in ../registry/packs/*/; do
             pnpm -s slot skill lint "$pack" --max-level 1 --json > "$RUNNER_TEMP/lint.json" 2> "$RUNNER_TEMP/lint.stderr" || true
             node ../registry/scripts/public-findings.mjs "$RUNNER_TEMP/lint.json"
