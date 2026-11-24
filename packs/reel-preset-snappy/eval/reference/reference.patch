@@ -1,0 +1,93 @@
+diff --git a/manifest.json b/manifest.json
+index e8ed9ea..ff7420e 100644
+--- a/manifest.json
++++ b/manifest.json
+@@ -41,7 +41,87 @@
+   "win": {
+     "kind": "lines"
+   },
+-  "reelFeel": "default",
++  "reelFeel": {
++    "speed": {
++      "normal": 5,
++      "turbo": 8
++    },
++    "startJump": {
++      "px": 18,
++      "ms": 90
++    },
++    "accelerate": {
++      "ms": 80,
++      "ease": "quadIn"
++    },
++    "blurSwapAt": 3,
++    "stop": {
++      "staggerMs": [
++        0,
++        120,
++        240,
++        360,
++        480
++      ],
++      "minSpinMs": 400
++    },
++    "descend": {
++      "ms": 240
++    },
++    "land": {
++      "overshootPx": 12,
++      "settleMs": 110,
++      "ease": "backOut"
++    },
++    "turbo": {},
++    "forceStop": {
++      "snap": true
++    },
++    "anticipation": {
++      "extraMs": 1500,
++      "speed": 2.5,
++      "shake": true
++    },
++    "cascade": {
++      "holdMs": 700,
++      "dropMs": 320,
++      "gapMs": 60,
++      "ease": "quadIn",
++      "drop": "together",
++      "gapBy": "moving",
++      "rowMs": 0,
++      "explodeMs": 0,
++      "bounce": {
++        "px": 0,
++        "ms": 100,
++        "ease": "quadOut"
++      }
++    },
++    "fall": {
++      "out": {
++        "delayMs": 100,
++        "staggerMs": 90,
++        "rowMs": 40,
++        "ms": 250,
++        "ease": "quadIn",
++        "hop": {
++          "px": 0,
++          "ms": 60,
++          "ease": "quadOut",
++          "mode": "cell"
++        }
++      },
++      "in": {
++        "rowMs": 50,
++        "ms": 220,
++        "ease": "quadIn",
++        "leadMs": 0,
++        "landing": "rebound",
++        "overlapMs": 0
++      }
++    },
++    "perReel": {}
++  },
+   "display": {
+     "width": 1280,
+     "height": 720,

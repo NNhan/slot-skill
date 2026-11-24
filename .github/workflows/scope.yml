@@ -1,0 +1,30 @@
+# Tier 1: the scope gate, on every pull request. No secret, a read-only token, nothing of the engine.
+# This run uses the workflow and the script of the pull request itself, so it is early feedback only: the gate that counts is the
+# same script run from `main` as the first step of gates.yml.
+name: scope
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: scope-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  scope:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Scope of the pull request
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: node scripts/scope.mjs --base "$(git merge-base "$BASE" "$HEAD")" --head "$HEAD"

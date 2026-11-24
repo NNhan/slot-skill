@@ -1,0 +1,4 @@
+# One line per pack: /packs/<id>/ @<GitHub login of its author>. The first pull request of a pack adds its line; an existing line
+# is changed by maintainers only. Everything else belongs to the maintainers.
+* @NNhan
+/packs/reel-preset-snappy/ @NNhan

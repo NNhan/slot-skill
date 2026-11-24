@@ -1,0 +1,19 @@
+{
+  "$schema": "slot://schema/skillReserved@1",
+  "formatVersion": 1,
+  "ids": [
+    "add-controller",
+    "add-feature",
+    "animation",
+    "editor-command",
+    "feel-extract",
+    "index",
+    "release-check",
+    "run-preview",
+    "scene-edit",
+    "skill-pack",
+    "triage-flaky",
+    "ui-button",
+    "write-scenario-test"
+  ]
+}

@@ -1,0 +1,267 @@
+# Tiers 2 and 3: every gate that needs the engine. The engine is private, so nothing here runs until a maintainer asks for ONE
+# commit of a pull request. The workflow is always the one of `main`.
+#
+#   lint       tier 2: reads the pull request as text and JSON; no code of the pull request runs.
+#              Label the pull request `gate:lint`, or dispatch with gate = lint.
+#   eval       tier 3: runs the pack's eval/accept.test.ts. Dispatch only, with the sha you READ: a label names the head at the
+#              moment it is added, which may not be the commit you were looking at.
+#   reference  tier 3: records eval/reference/ into an artifact; a maintainer reads it and commits it. Dispatch only.
+#
+# Rules every job keeps (pinned by the engine's tests; change them there first):
+#   - step 1 fetches `main` and the commit, refuses a commit that is not the pull request's head or not on top of `main`;
+#     step 2 is the scope gate, run with the script of `main`. Both come before the engine key is loaded;
+#   - the commit is exported as plain files into `pr/`; nothing is installed, built or run from there in tier 2;
+#   - the engine is cloned by one step that deletes the key file before it ends; no other step names a secret;
+#   - code of the pull request runs only in a container with no network, no capability and not as root, which sees the engine,
+#     `pr/` and nothing else of the runner; the job that does it has `permissions: {}`;
+#   - no cache, no third-party action, GitHub-hosted runners only;
+#   - the public log shows the rule, file and line of a finding, never its message, the tool's stderr or the engine's clone.
+name: gates
+run-name: gates ${{ inputs.gate || github.event.label.name }} · PR ${{ github.event.pull_request.number || inputs.pr }} · ${{ github.event.pull_request.head.sha || inputs.sha }}
+
+on:
+  pull_request_target:
+    types: [labeled]
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: Pull request number
+        required: true
+      sha:
+        description: The commit of that pull request you read (40 hex)
+        required: true
+      gate:
+        description: Which gate
+        required: true
+        type: choice
+        options: [lint, eval, reference]
+
+permissions: {}
+
+env:
+  PR: ${{ github.event.pull_request.number || inputs.pr }}
+  SHA: ${{ github.event.pull_request.head.sha || inputs.sha }}
+  REPO_URL: https://github.com/${{ github.repository }}
+
+jobs:
+  lint:
+    name: tier 2 (lint, index, data)
+    if: github.event.label.name == 'gate:lint' || inputs.gate == 'lint'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - name: Fetch main and the commit
+        run: |
+          [[ "$PR" =~ ^[0-9]+$ && "$SHA" =~ ^[0-9a-f]{40}$ ]]
+          git init -q registry
+          git -C registry fetch -q --no-tags "$REPO_URL" "+refs/heads/main:refs/remotes/origin/main" "+refs/pull/$PR/head:refs/remotes/origin/pr"
+          test "$(git -C registry rev-parse origin/pr)" = "$SHA"
+          test "$(git -C registry merge-base origin/main "$SHA")" = "$(git -C registry rev-parse origin/main)"
+          git -C registry checkout -q origin/main
+          printf '* -export-ignore -export-subst\n' > registry/.git/info/attributes
+      - name: Scope (script of main)
+        id: scope
+        working-directory: registry
+        run: node scripts/scope.mjs --base "$(git rev-parse origin/main)" --head "$SHA"
+      - name: Export the commit and the published bundles as plain files
+        run: |
+          mkdir pr dist
+          git -C registry archive "$SHA" | tar -x -C pr
+          if git -C registry fetch -q --no-tags "$REPO_URL" "+refs/heads/dist:refs/remotes/origin/dist"; then git -C registry archive origin/dist | tar -x -C dist; fi
+          git -C registry show -s --format=%cs "$SHA" > "$RUNNER_TEMP/today"
+      - name: Engine (read-only deploy key)
+        env:
+          ENGINE_DEPLOY_KEY: ${{ secrets.ENGINE_DEPLOY_KEY }}
+          ENGINE_REPOSITORY: ${{ secrets.ENGINE_REPOSITORY }}
+          GIT_LFS_SKIP_SMUDGE: 1
+        run: |
+          umask 077
+          keys="$RUNNER_TEMP/engine-key"
+          mkdir "$keys"
+          printf '%s\n' "$ENGINE_DEPLOY_KEY" > "$keys/id"
+          printf '%s\n' 'github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl' > "$keys/known_hosts"
+          export GIT_SSH_COMMAND="ssh -i $keys/id -o IdentitiesOnly=yes -o UserKnownHostsFile=$keys/known_hosts -o StrictHostKeyChecking=yes"
+          ok=0
+          git clone -q --depth 1 "git@github.com:$ENGINE_REPOSITORY.git" engine > /dev/null 2>&1 || ok=1
+          rm -rf "$keys"
+          if [ "$ok" -ne 0 ]; then echo "the engine could not be cloned"; exit 1; fi
+          git -C engine remote remove origin
+      - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: engine/package.json
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install the engine
+        working-directory: engine
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: 1
+        run: pnpm install --frozen-lockfile > "$RUNNER_TEMP/install.log" 2>&1
+      - name: Index gate (id, version, reserved ids, provides, level)
+        working-directory: engine
+        run: pnpm -s skill:index --root ../pr --dist ../dist --max-level 1 --today "$(cat "$RUNNER_TEMP/today")" 2> "$RUNNER_TEMP/index.stderr"
+      - name: Pack lint (schema, docs, safety, level)
+        if: steps.scope.outputs.pack != ''
+        working-directory: engine
+        env:
+          PACK: ${{ steps.scope.outputs.pack }}
+        run: |
+          pnpm -s slot skill lint "../pr/packs/$PACK" --max-level 1 --json > "$RUNNER_TEMP/lint.json" 2> "$RUNNER_TEMP/lint.stderr" || true
+          node ../registry/scripts/public-findings.mjs "$RUNNER_TEMP/lint.json"
+      - name: Data gate (install into a fresh project)
+        if: steps.scope.outputs.pack != ''
+        working-directory: engine
+        env:
+          PACK: ${{ steps.scope.outputs.pack }}
+        run: |
+          pnpm -s slot new game gateGame --dir "$RUNNER_TEMP/project" --json > "$RUNNER_TEMP/new.json" 2> "$RUNNER_TEMP/new.stderr" || true
+          node ../registry/scripts/public-findings.mjs "$RUNNER_TEMP/new.json"
+          pnpm -s slot skill add --from "../pr/packs/$PACK" --game "$RUNNER_TEMP/project" --json > "$RUNNER_TEMP/add.json" 2> "$RUNNER_TEMP/add.stderr" || true
+          node ../registry/scripts/public-findings.mjs "$RUNNER_TEMP/add.json"
+
+  eval:
+    name: tier 3 (eval reference)
+    if: github.event_name == 'workflow_dispatch' && inputs.gate == 'eval'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions: {}
+    steps:
+      - name: Fetch main and the commit
+        run: |
+          [[ "$PR" =~ ^[0-9]+$ && "$SHA" =~ ^[0-9a-f]{40}$ ]]
+          git init -q registry
+          git -C registry fetch -q --no-tags "$REPO_URL" "+refs/heads/main:refs/remotes/origin/main" "+refs/pull/$PR/head:refs/remotes/origin/pr"
+          test "$(git -C registry rev-parse origin/pr)" = "$SHA"
+          test "$(git -C registry merge-base origin/main "$SHA")" = "$(git -C registry rev-parse origin/main)"
+          git -C registry checkout -q origin/main
+          printf '* -export-ignore -export-subst\n' > registry/.git/info/attributes
+      - name: Scope (script of main)
+        id: scope
+        working-directory: registry
+        run: node scripts/scope.mjs --base "$(git rev-parse origin/main)" --head "$SHA"
+      - name: Export the commit as plain files
+        run: |
+          mkdir pr
+          git -C registry archive "$SHA" | tar -x -C pr
+      - name: Engine (read-only deploy key)
+        env:
+          ENGINE_DEPLOY_KEY: ${{ secrets.ENGINE_DEPLOY_KEY }}
+          ENGINE_REPOSITORY: ${{ secrets.ENGINE_REPOSITORY }}
+        run: |
+          umask 077
+          keys="$RUNNER_TEMP/engine-key"
+          mkdir "$keys"
+          printf '%s\n' "$ENGINE_DEPLOY_KEY" > "$keys/id"
+          printf '%s\n' 'github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl' > "$keys/known_hosts"
+          export GIT_SSH_COMMAND="ssh -i $keys/id -o IdentitiesOnly=yes -o UserKnownHostsFile=$keys/known_hosts -o StrictHostKeyChecking=yes"
+          ok=0
+          git clone -q --depth 1 "git@github.com:$ENGINE_REPOSITORY.git" engine > /dev/null 2>&1 || ok=1
+          rm -rf "$keys"
+          if [ "$ok" -ne 0 ]; then echo "the engine could not be cloned"; exit 1; fi
+          git -C engine remote remove origin
+      - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: engine/package.json
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install the engine
+        working-directory: engine
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: 1
+        run: pnpm install --frozen-lockfile > "$RUNNER_TEMP/install.log" 2>&1
+      - name: Run the pack's eval check (code of the pull request; container, no network)
+        if: steps.scope.outputs.pack != ''
+        env:
+          PACK: ${{ steps.scope.outputs.pack }}
+        run: |
+          docker run --rm --network none --user "$(id -u):$(id -g)" --cap-drop ALL --security-opt no-new-privileges --pids-limit 4096 \
+            -e HOME=/tmp/home -e CI=1 -e PATH="$HOME/setup-pnpm/node_modules/.bin:/usr/local/bin:/usr/bin:/bin" \
+            -v "$GITHUB_WORKSPACE/engine:$GITHUB_WORKSPACE/engine" -v "$GITHUB_WORKSPACE/pr:$GITHUB_WORKSPACE/pr" -v "$HOME/setup-pnpm:$HOME/setup-pnpm:ro" \
+            -w "$GITHUB_WORKSPACE/engine" node:22-bookworm \
+            pnpm -s slot skill eval "$GITHUB_WORKSPACE/pr/packs/$PACK" --check --json > "$RUNNER_TEMP/eval.json" 2> "$RUNNER_TEMP/eval.stderr" || true
+          node registry/scripts/public-findings.mjs "$RUNNER_TEMP/eval.json"
+
+  reference:
+    name: tier 3 (record eval/reference)
+    if: github.event_name == 'workflow_dispatch' && inputs.gate == 'reference'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions: {}
+    steps:
+      - name: Fetch main and the commit
+        run: |
+          [[ "$PR" =~ ^[0-9]+$ && "$SHA" =~ ^[0-9a-f]{40}$ ]]
+          git init -q registry
+          git -C registry fetch -q --no-tags "$REPO_URL" "+refs/heads/main:refs/remotes/origin/main" "+refs/pull/$PR/head:refs/remotes/origin/pr"
+          test "$(git -C registry rev-parse origin/pr)" = "$SHA"
+          test "$(git -C registry merge-base origin/main "$SHA")" = "$(git -C registry rev-parse origin/main)"
+          git -C registry checkout -q origin/main
+          printf '* -export-ignore -export-subst\n' > registry/.git/info/attributes
+      - name: Scope (script of main)
+        id: scope
+        working-directory: registry
+        run: node scripts/scope.mjs --base "$(git rev-parse origin/main)" --head "$SHA"
+      - name: Export the commit as plain files
+        run: |
+          mkdir pr
+          git -C registry archive "$SHA" | tar -x -C pr
+      - name: Engine (read-only deploy key)
+        env:
+          ENGINE_DEPLOY_KEY: ${{ secrets.ENGINE_DEPLOY_KEY }}
+          ENGINE_REPOSITORY: ${{ secrets.ENGINE_REPOSITORY }}
+        run: |
+          umask 077
+          keys="$RUNNER_TEMP/engine-key"
+          mkdir "$keys"
+          printf '%s\n' "$ENGINE_DEPLOY_KEY" > "$keys/id"
+          printf '%s\n' 'github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl' > "$keys/known_hosts"
+          export GIT_SSH_COMMAND="ssh -i $keys/id -o IdentitiesOnly=yes -o UserKnownHostsFile=$keys/known_hosts -o StrictHostKeyChecking=yes"
+          ok=0
+          git clone -q --depth 1 "git@github.com:$ENGINE_REPOSITORY.git" engine > /dev/null 2>&1 || ok=1
+          rm -rf "$keys"
+          if [ "$ok" -ne 0 ]; then echo "the engine could not be cloned"; exit 1; fi
+          git -C engine remote remove origin
+      - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: engine/package.json
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install the engine
+        working-directory: engine
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: 1
+        run: pnpm install --frozen-lockfile > "$RUNNER_TEMP/install.log" 2>&1
+      - name: Record the reference from the contributor's solution (code of the pull request; container, no network)
+        if: steps.scope.outputs.pack != ''
+        env:
+          PACK: ${{ steps.scope.outputs.pack }}
+        run: |
+          mkdir "$RUNNER_TEMP/gate" && cp registry/scripts/record-reference.sh "$RUNNER_TEMP/gate/"
+          docker run --rm --network none --user "$(id -u):$(id -g)" --cap-drop ALL --security-opt no-new-privileges --pids-limit 4096 \
+            -e HOME=/tmp/home -e CI=1 -e PATH="$HOME/setup-pnpm/node_modules/.bin:/usr/local/bin:/usr/bin:/bin" \
+            -v "$GITHUB_WORKSPACE/engine:$GITHUB_WORKSPACE/engine" -v "$GITHUB_WORKSPACE/pr:$GITHUB_WORKSPACE/pr" -v "$HOME/setup-pnpm:$HOME/setup-pnpm:ro" -v "$RUNNER_TEMP/gate:/gate:ro" \
+            -w "$GITHUB_WORKSPACE/engine" node:22-bookworm \
+            bash /gate/record-reference.sh "$GITHUB_WORKSPACE/pr/packs/$PACK" > "$RUNNER_TEMP/eval.json" 2> "$RUNNER_TEMP/eval.stderr" || true
+          node registry/scripts/public-findings.mjs "$RUNNER_TEMP/eval.json"
+      - name: The artifact is three small plain files, nothing else
+        if: steps.scope.outputs.pack != ''
+        env:
+          PACK: ${{ steps.scope.outputs.pack }}
+        run: |
+          dir="pr/packs/$PACK/eval/reference"
+          if [ -L "pr" ] || [ -L "pr/packs" ] || [ -L "pr/packs/$PACK" ] || [ -L "pr/packs/$PACK/eval" ] || [ -L "$dir" ]; then exit 1; fi
+          if [ -n "$(find "$dir" -mindepth 1 ! -type f)" ]; then exit 1; fi
+          test "$(find "$dir" -mindepth 1 | sort | tr '\n' ' ')" = "$dir/mcp.jsonl $dir/reference.patch $dir/signature.json "
+          test "$(du -sk "$dir" | cut -f1)" -lt 1024
+      - name: Upload eval/reference (a maintainer reads it, then commits it to the pull request)
+        if: steps.scope.outputs.pack != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: reference-${{ steps.scope.outputs.pack }}
+          path: pr/packs/${{ steps.scope.outputs.pack }}/eval/reference/
+          if-no-files-found: error
+          retention-days: 7

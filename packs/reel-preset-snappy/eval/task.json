@@ -1,0 +1,16 @@
+{
+  "id": "reel-preset-snappy",
+  "gate": false,
+  "game": "evalGame",
+  "setup": "newGame",
+  "vitestProject": null,
+  "ids": {
+    "game": "evalGame"
+  },
+  "knownTests": [],
+  "allowVary": [],
+  "reference": "reference",
+  "layouts": [
+    "install"
+  ]
+}

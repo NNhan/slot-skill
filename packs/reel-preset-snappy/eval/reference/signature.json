@@ -1,0 +1,19 @@
+{
+  "v": 2,
+  "files": {
+    "added": [],
+    "modified": [
+      "manifest.json"
+    ],
+    "deleted": []
+  },
+  "tests": [],
+  "testsPerFile": {},
+  "kinds": [
+    "manifest.set"
+  ],
+  "tools": [
+    "manifest.set",
+    "scene.save"
+  ]
+}

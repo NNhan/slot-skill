@@ -1,0 +1,87 @@
+# After a merge: generate index.v1.json and the bundle of every new version, and commit them to the `dist` branch.
+# `dist` holds generated files only; `main` holds sources only (a pull request never carries an index or a bundle).
+# The content read here was reviewed and merged; no code of a pack runs, and every pack is linted again before anything is written.
+# No cache is restored: a labelled job could have written it. The write token is given to the last step only.
+name: publish
+
+on:
+  push:
+    branches: [main]
+    paths: ['packs/**', 'evals/**', 'reserved.json', 'yanked.json']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: publish
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: registry
+          fetch-depth: 0
+          persist-credentials: false
+      - name: The dist branch (created empty the first time)
+        working-directory: registry
+        run: |
+          if git fetch -q origin "+refs/heads/dist:refs/remotes/origin/dist"; then
+            git worktree add -q -B dist ../dist origin/dist
+          else
+            git worktree add -q --detach ../dist
+            git -C ../dist checkout -q --orphan dist
+            git -C ../dist rm -rq --cached .
+            git -C ../dist clean -fdxq
+          fi
+      - name: Engine (read-only deploy key)
+        env:
+          ENGINE_DEPLOY_KEY: ${{ secrets.ENGINE_DEPLOY_KEY }}
+          ENGINE_REPOSITORY: ${{ secrets.ENGINE_REPOSITORY }}
+          GIT_LFS_SKIP_SMUDGE: 1
+        run: |
+          umask 077
+          keys="$RUNNER_TEMP/engine-key"
+          mkdir "$keys"
+          printf '%s\n' "$ENGINE_DEPLOY_KEY" > "$keys/id"
+          printf '%s\n' 'github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl' > "$keys/known_hosts"
+          export GIT_SSH_COMMAND="ssh -i $keys/id -o IdentitiesOnly=yes -o UserKnownHostsFile=$keys/known_hosts -o StrictHostKeyChecking=yes"
+          ok=0
+          git clone -q --depth 1 "git@github.com:$ENGINE_REPOSITORY.git" engine > /dev/null 2>&1 || ok=1
+          rm -rf "$keys"
+          if [ "$ok" -ne 0 ]; then echo "the engine could not be cloned"; exit 1; fi
+          git -C engine remote remove origin
+      - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: engine/package.json
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install the engine
+        working-directory: engine
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: 1
+        run: pnpm install --frozen-lockfile > "$RUNNER_TEMP/install.log" 2>&1
+      - name: Lint every pack (what is published was linted by this run, whatever ran before the merge)
+        working-directory: engine
+        run: |
+          for pack in ../registry/packs/*/; do
+            pnpm -s slot skill lint "$pack" --max-level 1 --json > "$RUNNER_TEMP/lint.json" 2> "$RUNNER_TEMP/lint.stderr" || true
+            node ../registry/scripts/public-findings.mjs "$RUNNER_TEMP/lint.json"
+          done
+      - name: Generate the index and the new bundles
+        working-directory: engine
+        run: pnpm -s skill:index --root ../registry --dist ../dist --max-level 1 --write 2> "$RUNNER_TEMP/index.stderr"
+      - name: Commit to dist
+        working-directory: dist
+        env:
+          TOKEN: ${{ github.token }}
+        run: |
+          git add -A
+          if git diff --cached --quiet; then echo "nothing to publish"; exit 0; fi
+          git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" commit -q -m "publish: index and bundles of ${GITHUB_SHA}"
+          git -c http.extraheader="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$TOKEN" | base64 -w0)" push -q "https://github.com/${GITHUB_REPOSITORY}" HEAD:refs/heads/dist
