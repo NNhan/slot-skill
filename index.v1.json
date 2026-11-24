@@ -1,0 +1,63 @@
+{
+  "$schema": "slot://schema/skillIndex@1",
+  "formatVersion": 1,
+  "registry": "default",
+  "reserved": [
+    "add-controller",
+    "add-feature",
+    "animation",
+    "editor-command",
+    "feel-extract",
+    "index",
+    "release-check",
+    "run-preview",
+    "scene-edit",
+    "skill-pack",
+    "triage-flaky",
+    "ui-button",
+    "write-scenario-test"
+  ],
+  "packs": {
+    "reel-preset-snappy": {
+      "title": "Snappy reel preset",
+      "description": "Dùng khi game cần reel quay và dừng nhanh, gọn: nạp preset reel snappy của pack vào manifest rồi kiểm bằng slot check.",
+      "authors": [
+        {
+          "name": "slot-engine"
+        }
+      ],
+      "license": "MIT",
+      "category": "presentation",
+      "tags": [
+        "reel",
+        "feel",
+        "preset"
+      ],
+      "latest": "1.0.0",
+      "versions": {
+        "1.0.0": {
+          "engine": ">=0.0.0 <1.0.0",
+          "level": 1,
+          "trust": "community",
+          "integrity": "sha256:b7d1e5ea6f4331090dc667f0dba03b4a284dfc9c12797c0b6eaf3fb22cdfff8d",
+          "bundle": "bundles/reel-preset-snappy/1.0.0.pack.json",
+          "publishedAt": "2026-11-24",
+          "provides": {
+            "features": [],
+            "controllers": []
+          },
+          "requires": {
+            "features": [],
+            "skills": []
+          },
+          "permissions": {
+            "network": false,
+            "scripts": []
+          },
+          "yanked": null,
+          "evals": []
+        }
+      }
+    }
+  }
+}
