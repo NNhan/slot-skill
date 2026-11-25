@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.2
+
+- Probe of the registry gates; this version is never merged.
+
 ## 1.0.1
 
 - Task eval tả kết quả bằng số và accept chấm `manifest.reelFeel` theo số, không đọc file của pack: nhánh "không skill" của phép đo làm được (ADR-067 Ghi nhận S5b).
