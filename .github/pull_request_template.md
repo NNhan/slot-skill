@@ -16,7 +16,7 @@ Paste the single line printed by `slot skill lint packs/<id> --json`:
 
 ## Eval task
 
-- [ ] `eval/task.md` does not name the pack
+- [ ] `eval/task.md` and `eval/accept.test.ts` describe and judge an outcome that can be reached without the pack: neither names the pack or a file it installs
 - [ ] `eval/reference/` is included, **or** my solution is in `eval/solution.patch` (a `git diff` of a project from `slot new game` with the pack installed), **or** the solution cannot be a patch and is described here:
 
 ## Checklist

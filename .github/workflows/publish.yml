@@ -1,5 +1,7 @@
-# After a merge: generate index.v1.json and the bundle of every new version, and commit them to the `dist` branch.
-# `dist` holds generated files only; `main` holds sources only (a pull request never carries an index or a bundle).
+# After a merge, and after a measurement: generate index.v1.json and the bundle of every new version, and commit them to the
+# `dist` branch. `dist` holds generated files only; `main` holds sources only (a pull request never carries an index or a bundle).
+# The registry's own results come from the `measured` branch (written by measure.yml only); they decide the `verified` label.
+# A run started by measure.yml takes nothing from that run: it reads the branches, like any other run of this workflow.
 # The content read here was reviewed and merged; no code of a pack runs, and every pack is linted again before anything is written.
 # No cache is restored: a labelled job could have written it. The write token is given to the last step only.
 name: publish
@@ -8,6 +10,9 @@ on:
   push:
     branches: [main]
     paths: ['packs/**', 'evals/**', 'reserved.json', 'yanked.json']
+  workflow_run:
+    workflows: [measure]
+    types: [completed]
   workflow_dispatch:
 
 permissions:
@@ -37,6 +42,10 @@ jobs:
             git -C ../dist checkout -q --orphan dist
             git -C ../dist rm -rq --cached .
             git -C ../dist clean -fdxq
+          fi
+          mkdir ../measured
+          if git fetch -q origin "+refs/heads/measured:refs/remotes/origin/measured"; then
+            git archive origin/measured | tar -x -C ../measured
           fi
       - name: Engine (read-only deploy key)
         env:
@@ -76,7 +85,7 @@ jobs:
           done
       - name: Generate the index and the new bundles
         working-directory: engine
-        run: pnpm -s skill:index --root ../registry --dist ../dist --max-level 1 --write 2> "$RUNNER_TEMP/index.stderr"
+        run: pnpm -s skill:index --root ../registry --dist ../dist --measured ../measured --max-level 1 --write 2> "$RUNNER_TEMP/index.stderr"
       - name: Commit to dist
         working-directory: dist
         env:

@@ -19,7 +19,22 @@ The gates after `scope` clone the engine, which is private. Until the items belo
 3. Settings → Actions → General: fork pull request workflows "Require approval for all outside collaborators"; workflow permissions "Read repository contents and packages permissions". Do **not** attach a self-hosted runner to this repository.
 4. Create the label `gate:lint`.
 
-The `dist` branch is written by `publish` only. Close pull requests that target it.
+The `dist` branch is written by `publish` only, the `measured` branch by `measure` only. Close pull requests that target either.
+
+### Turning the measurement on (optional; it spends money)
+
+`measure` runs a pack's eval task with a real agent, 5 times without the skill and 5 times with it, and its result decides the `verified` label. It does nothing until all of this is done:
+
+1. In the console of the model provider, create a **workspace used for nothing else**, set a monthly **spend limit** on that workspace, and create an API key in it. The spend limit of the workspace is the hard limit: everything below is a softer limit inside it. If the console lets you turn off server-side tools (web search, web fetch, code execution) or MCP connectors for that organization or workspace, turn them off: the proxy refuses them already, this is a second wall.
+2. This repository → Settings → **Environments** → New environment `measure`; Deployment branches and tags: **Selected branches**, add `main` only. In that environment, add the secret `MEASURE_API_KEY` = that key. It is an environment secret, not a repository secret: a `measure.yml` edited on another branch cannot reach it, nor run the job that writes to `measured`. Never put the key in a variable, a file or a workflow.
+3. Same page → **Variables**: `MEASURE` = `on` (the switch; delete it to turn measuring off). Optional: `MEASURE_RUN_BUDGET_USD` (per run, default 3) and `MEASURE_BUDGET_USD` (per measurement of 10 runs, default 30; it must be at least 10 times the run budget, or the matrix is cut short and nothing is recorded).
+4. `dist` rules apply to `measured` too: no force pushes, no deletions; if your plan has rulesets, restrict who can push to `measured` to the GitHub Actions app.
+
+One measurement costs at most `MEASURE_BUDGET_USD`. The schedule (weekly) measures at most one pack per run, taking turns among the packs whose `engine` range holds the current engine and that have no result for it yet (a pack whose measurement never finishes does not block the others). To measure a pack now: Actions → measure → **Run workflow** with the full sha of `main` you read and the pack id.
+
+How the key is kept: the job that runs the agent has no token and no network. The agent reaches the model through a unix socket to `scripts/model-proxy.mjs`, a process on the runner that holds the key, forwards the Messages API only, refuses a request that asks the provider to reach anything itself (an MCP connector, a server tool, a container, an image or document fetched from a URL or a file), drops any credential the caller sends, and ends the upstream call when the caller goes away; the key never enters the container. Of what the run prints, four values leave the job (runs, passes without, passes with, signature stable); the second job writes them to `measured`. What this does **not** close: whatever the agent reads (the pack, the engine's source) can be sent to the model under your key, and a pack can make the agent spend up to the budget. Measure only packs that were reviewed and merged.
+
+`measure` has not run for real yet. Its first run is the test of three things nobody could check without a key: the eval harness inside a container without network, the agent CLI talking to `http://127.0.0.1` through the relay, and a clone of the engine with its large files.
 
 ## What the gates can and cannot promise
 
@@ -50,6 +65,7 @@ A pull request may add `evals/<id>/<version>/<agent>.self.<reporter>.json`. Noth
 
 ## Known gaps
 
+- The agent CLI of `measure` is installed at `latest` from the public npm registry on every run; the measured version is not recorded in the result. Pin it (`AGENT_CLI` in measure.yml) once a first run has shown which version works.
 - Actions are pinned by tag (`@v4`), not by commit sha. Pin them to shas (Dependabot can keep them current) before the registry takes outside contributions.
 - The container image of tier 3 (`node:22-bookworm`) is pulled by tag.
 
